@@ -207,6 +207,7 @@ classdef M2K_GUI_App < matlab.apps.AppBase
                     app.meanVals(i) = mean(ch1Samples);
                     app.stdVals(i) = std(ch1Samples);
                 end
+                disp(app.meanVals(1:i)); % Display mean for debugging
                 app.StatusText.Value = {'Measurement complete. Plotting results...'};
                 drawnow;
 
