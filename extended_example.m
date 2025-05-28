@@ -462,8 +462,11 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
             app.powerSupply = [];
             app.isConnected = false;
 
-            app.InstantVoltageLabel.Text = 'Inst. Voltage: -- V';
-            app.lastAverageVoltage = 0; % Reset last voltage reading
+            % Check if the app object and the specific UI control are still valid
+            if isvalid(app) && isprop(app, 'InstantVoltageLabel') && isvalid(app.InstantVoltageLabel)
+                app.InstantVoltageLabel.Text = 'Inst. Voltage: -- V';
+            end
+            app.lastAverageVoltage = 0;
             % Do not reset calibration/tare status here, only on disconnect or app close.
             % updateOutputDisplays(app); % Refresh displays to show disconnected state potentially
         end
