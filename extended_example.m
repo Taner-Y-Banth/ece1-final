@@ -1,4 +1,4 @@
-classdef M2K_GUI_App < matlab.apps.AppBase
+classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
 
     % Properties that correspond to app components
     properties (Access = public)
@@ -22,12 +22,12 @@ classdef M2K_GUI_App < matlab.apps.AppBase
         CalibrationPanel             matlab.ui.container.Panel
         CalibrationMassGramsEditFieldLabel matlab.ui.control.Label
         CalibrationMassGramsEditField matlab.ui.control.NumericEditField
-        StartCalibrationProcessButton matlab.ui.control.Button % Replaces StartReferenceCalibrationButton
-        CalibrationStepInstructionLabel matlab.ui.control.Label % New
-        RecordEmptyScaleButton        matlab.ui.control.Button   % New
-        RecordWeightWithMassButton    matlab.ui.control.Button   % New
-        CancelCalibrationButton       matlab.ui.control.Button   % New
-        CalibrationStatusLabel       matlab.ui.control.Label     % Existing, shows final status
+        StartCalibrationProcessButton matlab.ui.control.Button
+        CalibrationStepInstructionLabel matlab.ui.control.Label
+        ConfirmTareStepButton         matlab.ui.control.Button   % New
+        ConfirmMeasurementStepButton  matlab.ui.control.Button   % New
+        CancelCalibrationButton       matlab.ui.control.Button
+        CalibrationStatusLabel       matlab.ui.control.Label
         DirectFactorPanel            matlab.ui.container.Panel
         ReferenceVoltageMvEditFieldLabel matlab.ui.control.Label
         ReferenceVoltageMvEditField  matlab.ui.control.NumericEditField
@@ -51,9 +51,9 @@ classdef M2K_GUI_App < matlab.apps.AppBase
 
     % Properties that correspond to app data
     properties (Access = private)
-        m2kDevice                   % Handle for the M2K device context
-        analogInput                 % Handle for analog input object
-        powerSupply                 % Handle for power supply object
+        m2kDevice
+        analogInput
+        powerSupply
 
         tareVoltage                  = 0;
         gramsPerVolt                 = 0;
@@ -61,8 +61,8 @@ classdef M2K_GUI_App < matlab.apps.AppBase
         isTared                      = false;
         avgJellyBeanWeightGrams      = 1.0;
 
-        currentSampleRate            = 100000; % Default, but MeasureWeight will read from field
-        currentWeighingDuration      = 5;      % Default, but MeasureWeight will read from field
+        currentSampleRate            = 100000;
+        currentWeighingDuration      = 5;
 
         lastAverageVoltage           = 0;
         currentWeightGrams           = 0;
@@ -73,163 +73,107 @@ classdef M2K_GUI_App < matlab.apps.AppBase
 
         initComponentsComplete = false;
         
-        % For guided calibration
-        calibrationState          = 0;     % 0:idle, 1:await_empty_tare, 2:await_mass_measurement
-        calibrationTareVoltage    = 0;     % Tare voltage specific to calibration sequence
+        calibrationState          = 0;     % 0:idle, 1:await_user_tare_confirm, 2:await_user_measure_confirm
+        calibrationTareVoltage    = 0;
     end
 
-    % Callbacks that handle component events
     methods (Access = private)
 
         function startupFcn(app)
             disp('StartupFcn starting...');
             app.StatusText.Value = {'App Started. Please connect to M2K.'};
-            
             updateButtonStates(app);
             updateStatusLabels(app);
             updateOutputDisplays(app); 
-            updateCalibrationUIState(app); % Initialize calibration UI state
-
+            updateCalibrationUIState(app);
             app.initComponentsComplete = true;
             disp('StartupFcn completed. initComponentsComplete=true.');
         end
 
-        % --- New Helper Function for Calibration UI ---
         function updateCalibrationUIState(app)
             isIdle = (app.calibrationState == 0);
-            isStep1_AwaitEmpty = (app.calibrationState == 1);
-            isStep2_AwaitMass = (app.calibrationState == 2);
+            isStep1_AwaitUserTareConfirm = (app.calibrationState == 1);
+            isStep2_AwaitUserMeasureConfirm = (app.calibrationState == 2);
             canProceed = app.isConnected;
 
-            app.CalibrationMassGramsEditField.Enable = (isIdle && canProceed);
-            app.StartCalibrationProcessButton.Enable = canProceed;
+            app.CalibrationMassGramsEditField.Enable = escritura((isIdle && canProceed), 'on', 'off');
+            app.StartCalibrationProcessButton.Enable = escritura(canProceed, 'on', 'off');
             if isIdle
                 app.StartCalibrationProcessButton.Text = 'Start New Calibration';
             else
                 app.StartCalibrationProcessButton.Text = 'Restart Calibration Process';
             end
             
-            app.RecordEmptyScaleButton.Enable = (isStep1_AwaitEmpty && canProceed);
-            app.RecordWeightWithMassButton.Enable = (isStep2_AwaitMass && canProceed);
-            app.CancelCalibrationButton.Enable = (~isIdle && canProceed);
+            app.ConfirmTareStepButton.Enable = escritura((isStep1_AwaitUserTareConfirm && canProceed), 'on', 'off');
+            app.ConfirmTareStepButton.Visible = escritura(isStep1_AwaitUserTareConfirm, 'on', 'off');
+            
+            app.ConfirmMeasurementStepButton.Enable = escritura((isStep2_AwaitUserMeasureConfirm && canProceed), 'on', 'off');
+            app.ConfirmMeasurementStepButton.Visible = escritura(isStep2_AwaitUserMeasureConfirm, 'on', 'off');
+
+            app.CancelCalibrationButton.Enable = escritura((~isIdle && canProceed), 'on', 'off');
+            app.CancelCalibrationButton.Visible = escritura(~isIdle, 'on', 'off');
 
             if ~canProceed && isIdle
                 app.CalibrationStepInstructionLabel.Text = 'Connect M2K to enable calibration.';
             elseif isIdle
                 app.CalibrationStepInstructionLabel.Text = 'Enter Ref. Mass & click "Start New Calibration".';
-            elseif isStep1_AwaitEmpty
-                app.CalibrationStepInstructionLabel.Text = '1. Ensure scale is EMPTY. Then click button below.';
-            elseif isStep2_AwaitMass
+            elseif isStep1_AwaitUserTareConfirm
+                app.CalibrationStepInstructionLabel.Text = '1. Ensure scale is EMPTY. Press main "Tare Scale" button, THEN click "Confirm Scale is Tared" above.';
+            elseif isStep2_AwaitUserMeasureConfirm
                 mass_val = app.CalibrationMassGramsEditField.Value;
-                app.CalibrationStepInstructionLabel.Text = ['2. Place ', num2str(mass_val), 'g on scale. Then click button below.'];
+                app.CalibrationStepInstructionLabel.Text = ['2. Place ', num2str(mass_val), 'g. Press main "Measure Weight" button, THEN click "Confirm Mass is Measured" above.'];
             end
         end
 
-        % --- Modified Calibration Callbacks ---
         function StartCalibrationProcessButtonPushed(app, event)
             if ~app.isConnected, app.StatusText.Value = {'Error: M2K not connected.'}; return; end
             calibMass = app.CalibrationMassGramsEditField.Value;
             if calibMass <= 0, app.StatusText.Value = {'Error: Reference mass must be positive.'}; return; end
             
             app.calibrationState = 1; 
-            app.isScaleCalibrated = false; app.gramsPerVolt = 0; % Reset calibration status
-            app.StatusText.Value = {['Calibration process started. Ref Mass: ', num2str(calibMass), 'g.']};
+            app.isScaleCalibrated = false; app.gramsPerVolt = 0;
+            app.StatusText.Value = {['Calibration started. Ref Mass: ', num2str(calibMass), 'g. Follow instructions.']};
             updateCalibrationUIState(app);
             updateStatusLabels(app);
         end
 
-        function RecordEmptyScaleButtonPushed(app, event)
+        function ConfirmTareStepButtonPushed(app, event)
             if ~app.isConnected || app.calibrationState ~= 1, return; end
-            app.StatusText.Value = [app.StatusText.Value; {'Recording empty scale voltage (tare for calibration)...'}]; drawnow;
-            
-            try
-                app.analogInput.enableChannel(0, true); % Enable channel
-                % Use a fixed sample rate and duration for this specific tare operation, or app.currentSampleRate
-                % Let's use app.currentSampleRate (which defaults or is from last measurement) for consistency with old Tare.
-                activeSampleRate = app.SampleRateEditField.Value; % Read from field for current value
-                app.analogInput.setSampleRate(activeSampleRate);
-                
-                tareDuration = 1.0; % 1-second average
-                samplesForTare = round(tareDuration * activeSampleRate);
 
-                if samplesForTare <= 0
-                    app.StatusText.Value = [app.StatusText.Value; {'Error: Samples for tare is zero or negative.'}];
-                    % app.analogInput.enableChannel(0, false); % Consider disabling if error
-                    return;
-                end
-                app.analogInput.setKernelBuffersCount(1); % M2K Interaction
-                
-                clibSamples = app.analogInput.getSamplesInterleaved_matlab(samplesForTare * 2);
-                ch1Samples = double(clibSamples(1:2:end));
-                % Channel NOT explicitly disabled here, mimicking previous working pattern for individual operations
-
-                if isempty(ch1Samples)
-                    app.StatusText.Value = [app.StatusText.Value; {'Error: Failed to acquire empty scale voltage (no samples).'}];
-                    return;
-                end
-                app.calibrationTareVoltage = mean(ch1Samples);
-                app.StatusText.Value = [app.StatusText.Value; {['Empty scale voltage: ', num2str(app.calibrationTareVoltage, '%.4f'), ' V.']}];
-                app.calibrationState = 2;
-                updateCalibrationUIState(app);
-            catch ME
-                app.StatusText.Value = [app.StatusText.Value; {['Error recording empty scale voltage: ', ME.message]}];
-                % try app.analogInput.enableChannel(0, false); catch; end % Attempt cleanup
+            if ~app.isTared 
+                app.StatusText.Value = [app.StatusText.Value; {'Error: Scale not tared. Press main "Tare Scale" button first.'}];
+                uiwait(msgbox('Please press the main "Tare Scale" button in the Operation Panel before confirming.', 'Tare Required', 'warn'));
+                return;
             end
+
+            app.calibrationTareVoltage = app.tareVoltage; 
+            app.StatusText.Value = [app.StatusText.Value; {['Tare confirmed for cal. Tare V: ', num2str(app.calibrationTareVoltage, '%.4f')]}];
+            app.calibrationState = 2; 
+            updateCalibrationUIState(app);
         end
 
-        function RecordWeightWithMassButtonPushed(app, event)
+        function ConfirmMeasurementStepButtonPushed(app, event)
             if ~app.isConnected || app.calibrationState ~= 2, return; end
-            app.StatusText.Value = [app.StatusText.Value; {'Recording voltage with reference mass...'}]; drawnow;
+            
+            voltageWithMass = app.lastAverageVoltage; 
+            app.StatusText.Value = [app.StatusText.Value; {['Measurement confirmed for cal. Voltage with mass: ', num2str(voltageWithMass, '%.4f')]}];
+            
+            calibMass = app.CalibrationMassGramsEditField.Value;
+            voltageDifference = voltageWithMass - app.calibrationTareVoltage;
 
-            try
-                app.analogInput.enableChannel(0, true); % Enable
-                activeSampleRate = app.SampleRateEditField.Value; % Use current UI setting
-                activeDuration = app.WeighingDurationEditField.Value; % Use current UI setting
-                app.analogInput.setSampleRate(activeSampleRate);
-                
-                samplesToAcquire = round(activeDuration * activeSampleRate);
-                if samplesToAcquire <= 0
-                    app.StatusText.Value = [app.StatusText.Value; {['Error: Samples for mass measurement is zero or negative.']}];
-                    % app.analogInput.enableChannel(0, false); % Consider disabling
-                    return;
-                end
-                app.analogInput.setKernelBuffersCount(1); % M2K Interaction
-
-                clibSamples = app.analogInput.getSamplesInterleaved_matlab(samplesToAcquire * 2);
-                ch1Samples = double(clibSamples(1:2:end));
-                % Channel NOT explicitly disabled here
-
-                if isempty(ch1Samples)
-                    app.StatusText.Value = [app.StatusText.Value; {'Error: Failed to acquire voltage with mass (no samples).'}];
-                    return;
-                end
-                
-                voltageWithMass = mean(ch1Samples);
-                app.StatusText.Value = [app.StatusText.Value; {['Voltage with mass: ', num2str(voltageWithMass, '%.4f'), ' V.']}];
-                
-                calibMass = app.CalibrationMassGramsEditField.Value;
-                voltageDifference = voltageWithMass - app.calibrationTareVoltage;
-
-                if abs(voltageDifference) < 1e-6
-                    app.StatusText.Value = [app.StatusText.Value; {'Error: Voltage difference too small. Check setup.'}];
-                    app.isScaleCalibrated = false;
-                else
-                    app.gramsPerVolt = calibMass / voltageDifference;
-                    app.isScaleCalibrated = true;
-                    app.tareVoltage = app.calibrationTareVoltage; % Set main tare
-                    app.isTared = true;
-                    app.lastAverageVoltage = voltageWithMass;
-                    app.StatusText.Value = [app.StatusText.Value; {['Scale calibrated! Factor: ', num2str(app.gramsPerVolt, '%.4f'), ' g/V. Scale tared.']}];
-                end
-                
-                app.calibrationState = 0;
-                updateCalibrationUIState(app);
-                updateStatusLabels(app);
-                updateOutputDisplays(app);
-            catch ME
-                app.StatusText.Value = [app.StatusText.Value; {['Error recording voltage with mass: ', ME.message]}];
-                % try app.analogInput.enableChannel(0, false); catch; end
+            if abs(voltageDifference) < 1e-6
+                app.StatusText.Value = [app.StatusText.Value; {'Error: Voltage difference too small. Ensure mass was measured correctly after taring.'}];
+                app.isScaleCalibrated = false;
+            else
+                app.gramsPerVolt = calibMass / voltageDifference;
+                app.isScaleCalibrated = true;
+                app.StatusText.Value = [app.StatusText.Value; {['Scale calibrated! Factor: ', num2str(app.gramsPerVolt, '%.4f'), ' g/V.']}];
             end
+            
+            app.calibrationState = 0; 
+            updateCalibrationUIState(app);
+            updateStatusLabels(app); 
+            updateOutputDisplays(app); 
         end
 
         function CancelCalibrationButtonPushed(app, event)
@@ -238,7 +182,6 @@ classdef M2K_GUI_App < matlab.apps.AppBase
             updateCalibrationUIState(app);
         end
         
-        % --- Standard M2K Interaction Callbacks ---
         function ConnectM2KButtonPushed(app, event)
             app.StatusText.Value = {'Connecting to M2K...'}; drawnow;
             try
@@ -260,7 +203,7 @@ classdef M2K_GUI_App < matlab.apps.AppBase
 
         function DisconnectM2KButtonPushed(app, event)
             app.StatusText.Value = {'Disconnecting M2K...'}; drawnow;
-            cleanupM2K(app); % cleanupM2K will disable channels
+            cleanupM2K(app);
             app.StatusText.Value = {'M2K Disconnected.'};
             app.isScaleCalibrated = false; app.isTared = false; app.tareVoltage = 0; app.gramsPerVolt = 0;
             app.lastAverageVoltage = 0; app.currentWeightGrams = 0; app.currentJellyBeanCount = 0;
@@ -303,25 +246,28 @@ classdef M2K_GUI_App < matlab.apps.AppBase
             updateStatusLabels(app); updateButtonStates(app); updateOutputDisplays(app); updateCalibrationUIState(app);
         end
         
-        function TareButtonPushed(app, event) % General Tare
+        function TareButtonPushed(app, event)
             if ~app.isConnected || isempty(app.analogInput), app.StatusText.Value = {'Error: M2K not connected.'}; return; end
             
-            app.calibrationState = 0; % Cancel any ongoing ref weight calibration
-            updateCalibrationUIState(app); 
+            if app.calibrationState == 1 % If in calibration step 1
+                 app.StatusText.Value = [app.StatusText.Value; {'Main Tare pressed during calibration step 1.'}];
+            else % If not in that specific calibration step, cancel any ongoing ref. cal.
+                app.calibrationState = 0; 
+            end
+            updateCalibrationUIState(app); % Update cal UI based on new state
             app.StatusText.Value = [app.StatusText.Value; {'Taring (General)...'}]; drawnow;
 
             try
                 app.analogInput.enableChannel(0, true);
-                activeSampleRate = app.SampleRateEditField.Value; % Use current UI setting
+                activeSampleRate = app.SampleRateEditField.Value; 
                 app.analogInput.setSampleRate(activeSampleRate);
                 
                 tareDuration = 1.0; samplesForTare = round(tareDuration * activeSampleRate);
                 if samplesForTare <= 0, app.StatusText.Value = [app.StatusText.Value; {'Error: Samples for tare zero.'}]; return; end
-                app.analogInput.setKernelBuffersCount(1); % M2K Interaction
+                app.analogInput.setKernelBuffersCount(1); 
                 
                 clibSamples = app.analogInput.getSamplesInterleaved_matlab(samplesForTare * 2);
                 ch1Samples = double(clibSamples(1:2:end));
-                % Channel NOT explicitly disabled here
 
                 if isempty(ch1Samples), app.StatusText.Value = [app.StatusText.Value; {'Warning: No samples for tare.'}]; app.isTared = false; return; end
                 
@@ -339,29 +285,30 @@ classdef M2K_GUI_App < matlab.apps.AppBase
             statusMsg = {};
             if ~app.isScaleCalibrated, statusMsg{end+1} = 'Warning: Not calibrated.'; end
             if ~app.isTared, statusMsg{end+1} = 'Warning: Not tared.'; end
+            
+            if app.calibrationState == 2 % If in calibration step 2
+                 statusMsg = [statusMsg, {'Main Measure Weight pressed during calibration step 2.'}];
+            end
             app.StatusText.Value = [statusMsg, {'Measuring weight...'}]; drawnow;
 
             try
-                app.analogInput.enableChannel(0, true); % Enable
-                instVoltage = app.analogInput.getVoltage(0); % Quick check
+                app.analogInput.enableChannel(0, true); 
+                instVoltage = app.analogInput.getVoltage(0); 
                 if isvalid(app.InstantVoltageLabel), app.InstantVoltageLabel.Text = ['Inst. V: ', num2str(instVoltage, '%.4f')]; end
 
-                % Update app properties with current UI values for acquisition
                 app.currentSampleRate = app.SampleRateEditField.Value;
                 app.currentWeighingDuration = app.WeighingDurationEditField.Value;
                 
                 app.analogInput.setSampleRate(app.currentSampleRate);
                 samplesToAcquire = round(app.currentWeighingDuration * app.currentSampleRate);
                 if samplesToAcquire <= 0, app.StatusText.Value = [app.StatusText.Value; {'Error: samplesToAcquire zero.'}]; return; end
-                app.analogInput.setKernelBuffersCount(1); % M2K Interaction
+                app.analogInput.setKernelBuffersCount(1); 
 
                 clibSamples = app.analogInput.getSamplesInterleaved_matlab(samplesToAcquire * 2);
                 ch1Samples = double(clibSamples(1:2:end));
-                % Channel NOT explicitly disabled here
 
                 if isempty(ch1Samples)
                      app.StatusText.Value = [app.StatusText.Value; {'Warning: No samples received.'}];
-                     % app.lastAverageVoltage = app.tareVoltage; % Or keep previous if no samples
                 else
                     app.lastAverageVoltage = mean(ch1Samples);
                 end
@@ -380,15 +327,14 @@ classdef M2K_GUI_App < matlab.apps.AppBase
 
         function updateButtonStates(app)
             state = app.isConnected;
-            app.ConnectM2KButton.Enable = ~state;
-            app.CalibrateADCDACButton.Enable = state;
-            app.SetPowerSupplyButton.Enable = state;
-            app.DisconnectM2KButton.Enable = state;
-            app.ApplyDirectFactorButton.Enable = state;
-            app.TareButton.Enable = state;
-            app.MeasureWeightButton.Enable = state;
-            % Calibration process buttons are handled by updateCalibrationUIState
-            updateCalibrationUIState(app); % Ensure it's called when connection state changes
+            app.ConnectM2KButton.Enable = escritura(~state, 'on', 'off');
+            app.CalibrateADCDACButton.Enable = escritura(state, 'on', 'off');
+            app.SetPowerSupplyButton.Enable = escritura(state, 'on', 'off');
+            app.DisconnectM2KButton.Enable = escritura(state, 'on', 'off');
+            app.ApplyDirectFactorButton.Enable = escritura(state, 'on', 'off');
+            app.TareButton.Enable = escritura(state, 'on', 'off');
+            app.MeasureWeightButton.Enable = escritura(state, 'on', 'off');
+            updateCalibrationUIState(app); 
         end
 
         function updateStatusLabels(app)
@@ -427,10 +373,10 @@ classdef M2K_GUI_App < matlab.apps.AppBase
         function cleanupM2K(app)
             if isvalid(app) && ~isempty(app.m2kDevice) && ~clibIsNull(app.m2kDevice)
                 try
-                    if isprop(app, 'analogInput') && ~isempty(app.analogInput) && isvalid(app.analogInput) % Check isvalid for safety
+                    if isprop(app, 'analogInput') && ~isempty(app.analogInput) && isobject(app.analogInput) && isvalid(app.analogInput)
                         app.analogInput.enableChannel(0, false); 
                     end
-                    if isprop(app, 'powerSupply') && ~isempty(app.powerSupply) && isvalid(app.powerSupply)
+                    if isprop(app, 'powerSupply') && ~isempty(app.powerSupply) && isobject(app.powerSupply) && isvalid(app.powerSupply)
                          app.powerSupply.enableChannel(0, false); 
                     end
                     clib.libm2k.libm2k.context.contextCloseAll();
@@ -486,24 +432,17 @@ classdef M2K_GUI_App < matlab.apps.AppBase
             app.AvgJellyBeanWeightGramsEditFieldLabel = uilabel(app.ScaleSettingsPanel, 'Text', 'Avg. Jelly Bean Wt. (g):', 'Position', [10 20 130 22], 'HorizontalAlignment', 'right');
             app.AvgJellyBeanWeightGramsEditField = uieditfield(app.ScaleSettingsPanel, 'numeric', 'Limits', [0.001 Inf], 'ValueDisplayFormat', '%.3f', 'Value', app.avgJellyBeanWeightGrams, 'Position', [150 20 70 22], 'ValueChangedFcn', createCallbackFcn(app, @avgJellyBeanWeightChanged, true));
 
-            % --- Calibration Panel (Layout for improved flow) ---
+            % --- Calibration Panel (Layout for simplified flow) ---
             app.CalibrationPanel = uipanel(app.UIFigure, 'Title', 'Scale Calibration', 'Position', [20 150 400 310]); 
-
             uilabel(app.CalibrationPanel, 'Text', 'Reference Weight Method:', 'FontWeight', 'bold', 'Position', [10 275 380 22]);
             app.CalibrationMassGramsEditFieldLabel = uilabel(app.CalibrationPanel, 'Text', 'Ref. Mass (g):', 'Position', [10 250 85 22], 'HorizontalAlignment', 'right');
             app.CalibrationMassGramsEditField = uieditfield(app.CalibrationPanel, 'numeric', 'Limits', [0.001 Inf], 'Value', 100, 'Position', [105 250 70 22]);
             app.StartCalibrationProcessButton = uibutton(app.CalibrationPanel, 'push', 'Text', 'Start New Calibration', 'Position', [190 250 190 23], 'ButtonPushedFcn', createCallbackFcn(app, @StartCalibrationProcessButtonPushed, true));
-            
             app.CalibrationStepInstructionLabel = uilabel(app.CalibrationPanel, 'Text', 'Instructions appear here.', 'Position', [10 220 380 22], 'HorizontalAlignment', 'center');
-            
-            app.RecordEmptyScaleButton = uibutton(app.CalibrationPanel, 'push', 'Text', '1. Record Empty Scale Voltage', 'Position', [10 190 380 23], 'ButtonPushedFcn', createCallbackFcn(app, @RecordEmptyScaleButtonPushed, true));
-            app.RecordWeightWithMassButton = uibutton(app.CalibrationPanel, 'push', 'Text', '2. Record Voltage with Reference Mass', 'Position', [10 160 380 23], 'ButtonPushedFcn', createCallbackFcn(app, @RecordWeightWithMassButtonPushed, true));
-            
+            app.ConfirmTareStepButton = uibutton(app.CalibrationPanel, 'push', 'Text', 'Confirm Scale is Tared', 'Position', [10 190 380 23], 'ButtonPushedFcn', createCallbackFcn(app, @ConfirmTareStepButtonPushed, true));
+            app.ConfirmMeasurementStepButton = uibutton(app.CalibrationPanel, 'push', 'Text', 'Confirm Mass is Measured', 'Position', [10 160 380 23], 'ButtonPushedFcn', createCallbackFcn(app, @ConfirmMeasurementStepButtonPushed, true));
             app.CalibrationStatusLabel = uilabel(app.CalibrationPanel, 'Text', 'Calibration: Not Calibrated', 'Position', [10 130 380 22], 'FontWeight', 'bold');
-            
             app.CancelCalibrationButton = uibutton(app.CalibrationPanel, 'push', 'Text', 'Cancel Ref. Wt. Cal', 'Position', [10 15 180 23], 'ButtonPushedFcn', createCallbackFcn(app, @CancelCalibrationButtonPushed, true), 'BackgroundColor', [0.92 0.8 0.8]);
-
-            % Direct Factor Panel (Nested inside CalibrationPanel)
             app.DirectFactorPanel = uipanel(app.CalibrationPanel, 'Title', 'Direct Factor Input (Alternative)', 'Position', [10 50 380 70]);
             app.ReferenceVoltageMvEditFieldLabel = uilabel(app.DirectFactorPanel, 'Text', 'If change of (mV):', 'Position', [5 35 110 22], 'HorizontalAlignment', 'right');
             app.ReferenceVoltageMvEditField = uieditfield(app.DirectFactorPanel, 'numeric', 'Value', 100, 'Position', [125 35 70 22]);
@@ -535,7 +474,7 @@ classdef M2K_GUI_App < matlab.apps.AppBase
 
     % App creation and deletion
     methods (Access = public)
-        function app = M2K_GUI_App()
+        function app = JellyBeanScaleGUI_App()
             createComponents(app)
             registerApp(app, app.UIFigure)
             runStartupFcn(app, @startupFcn)
@@ -550,5 +489,14 @@ classdef M2K_GUI_App < matlab.apps.AppBase
                  delete(app.UIFigure)
             end
         end
+    end
+end
+
+% Helper function to handle 'on'/'off' for Enable/Visible properties
+function val = escritura(condition, trueVal, falseVal)
+    if condition
+        val = trueVal;
+    else
+        val = falseVal;
     end
 end
