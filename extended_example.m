@@ -462,11 +462,23 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
             app.powerSupply = [];
             app.isConnected = false;
 
-            % Check if the app object and the specific UI control are still valid
-            if isvalid(app) && isprop(app, 'InstantVoltageLabel') && isvalid(app.InstantVoltageLabel)
-                app.InstantVoltageLabel.Text = 'Inst. Voltage: -- V';
+            try
+                % Attempt to update the UI element only if it's still fully valid
+                if isvalid(app) && ...
+                   isprop(app, 'UIFigure') && ~isempty(app.UIFigure) && isvalid(app.UIFigure) && ...
+                   isprop(app, 'InstantVoltageLabel') && ~isempty(app.InstantVoltageLabel) && isvalid(app.InstantVoltageLabel)
+                    
+                    app.InstantVoltageLabel.Text = 'Inst. Voltage: -- V';
+                end
+            catch ME_cleanup_ui
+                % You can uncomment the next line for debugging if you want to see if this catch block is hit
+                % fprintf('A minor UI cleanup error occurred: %s\n', ME_cleanup_ui.message);
+                % This error is ignored to allow the rest of the cleanup to proceed
             end
+            
             app.lastAverageVoltage = 0;
+            % Any other non-UI related cleanup can go here without being in the try-catch,
+            % or within its own try-catch if it's also potentially problematic.
             % Do not reset calibration/tare status here, only on disconnect or app close.
             % updateOutputDisplays(app); % Refresh displays to show disconnected state potentially
         end
