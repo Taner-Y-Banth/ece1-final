@@ -152,8 +152,8 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
         end
 
         function DisconnectM2KButton_ScalePushed(app, event)
+            app.GeneralStatusTextArea.Value = {'User initiated M2K Disconnect.'};
             cleanupM2K_scale(app);
-            app.GeneralStatusTextArea.Value = {'M2K Disconnected.'};
             updateComponentStates(app);
         end
 
@@ -172,13 +172,16 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
             end
 
             % Simple linear mapping for DAC voltage based on simulated weight
-            % This is a placeholder. The actual V/g relationship from your hardware will be different.
             dacVoltage = app.minDacVoltage + (simWeight / app.maxSimulatedWeightGrams) * (app.maxDacVoltage - app.minDacVoltage);
             
             try
-                app.analogOutput_scale.setVoltage(0, dacVoltage); % Set DAC W1
-                app.SimulatedVoltageLabel.Text = ['DAC W1 Output: ',num2str(dacVoltage, '%.3f'),' V (Simulating ', num2str(simWeight), 'g)'];
-                app.GeneralStatusTextArea.Value = {['Simulated load set. DAC outputting ', num2str(dacVoltage, '%.3f'), 'V.']};
+                if ~isempty(app.analogOutput_scale) && isobject(app.analogOutput_scale) && isvalid(app.analogOutput_scale)
+                    app.analogOutput_scale.setVoltage(0, dacVoltage); % Set DAC W1
+                    app.SimulatedVoltageLabel.Text = ['DAC W1 Output: ',num2str(dacVoltage, '%.3f'),' V (Simulating ', num2str(simWeight), 'g)'];
+                    app.GeneralStatusTextArea.Value = {['Simulated load set. DAC outputting ', num2str(dacVoltage, '%.3f'), 'V.']};
+                else
+                    app.GeneralStatusTextArea.Value = {'Error: Analog output object not valid for setting DAC.'};
+                end
             catch ME
                 app.GeneralStatusTextArea.Value = {['Error setting DAC voltage: ', ME.message]};
             end
@@ -192,18 +195,17 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
             app.GeneralStatusTextArea.Value = {'Recording zero point voltage...'};
             drawnow;
             
-            % For simulation, ensure simulated weight is 0g
-            if ~isempty(app.SimulatedWeightEditField) % Check if simulation panel exists
+            if ~isempty(app.SimulatedWeightEditField) 
                  app.SimulatedWeightEditField.Value = 0;
-                 SetSimulatedLoadButtonPushed(app, []); % Trigger DAC update
-                 pause(0.1); % Allow DAC to settle
+                 SetSimulatedLoadButtonPushed(app, []); 
+                 pause(0.1); 
             end
 
-            voltages = readAverageVoltage(app, 10); % Read average of 10 samples
+            voltages = readAverageVoltage(app, 10); 
             if ~isnan(voltages)
                 app.zeroVoltage = mean(voltages);
                 app.GeneralStatusTextArea.Value = {['Zero point recorded. Voltage: ', num2str(app.zeroVoltage, '%.4f'), ' V']};
-                app.isCalibrated = false; % Reset calibration status until full calibration
+                app.isCalibrated = false; 
                 app.CalibrationStatusLabel.Text = 'Status: Zero Point Recorded';
             else
                 app.GeneralStatusTextArea.Value = {'Error reading zero point voltage.'};
@@ -227,28 +229,20 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
             app.GeneralStatusTextArea.Value = {['Recording voltage for ', num2str(app.knownCalMassGrams), 'g...']};
             drawnow;
 
-            % For simulation, set simulated weight to calibration mass
-             if ~isempty(app.SimulatedWeightEditField) % Check if simulation panel exists
+             if ~isempty(app.SimulatedWeightEditField) 
                  app.SimulatedWeightEditField.Value = app.knownCalMassGrams;
-                 SetSimulatedLoadButtonPushed(app, []); % Trigger DAC update
-                 pause(0.1); % Allow DAC to settle
+                 SetSimulatedLoadButtonPushed(app, []); 
+                 pause(0.1); 
              end
 
             voltages = readAverageVoltage(app, 10);
             if ~isnan(voltages)
                 app.calWeightVoltage = mean(voltages);
                 
-                if abs(app.calWeightVoltage - app.zeroVoltage) < 1e-6 % Avoid division by zero or tiny number
+                if abs(app.calWeightVoltage - app.zeroVoltage) < 1e-6 
                     app.GeneralStatusTextArea.Value = {'Error: Voltage difference for calibration is too small. Check setup or calibration mass.'};
                     app.isCalibrated = false;
                 else
-                    % Slope: grams per Volt (if voltage increases with weight)
-                    % Or Volt per gram: (app.calWeightVoltage - app.zeroVoltage) / app.knownCalMassGrams
-                    % Let's use V/g for slope, then weight = (V - V0)/slope_Vg
-                    % Or g/V for slope, then weight = (V - V0) * slope_gV
-                    % Let's define slope as (change in voltage / change in mass)
-                    % So, voltage = slope_Vg * mass + zeroVoltage
-                    % mass = (voltage - zeroVoltage) / slope_Vg
                     app.calibrationSlope = (app.calWeightVoltage - app.zeroVoltage) / app.knownCalMassGrams; % Units: Volts/gram
                     
                     if app.calibrationSlope == 0
@@ -272,10 +266,9 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
             if ~app.isCalibrated
                 app.GeneralStatusTextArea.Value = {'Error: Scale not calibrated. Cannot tare.'}; return;
             end
-            if isempty(app.currentRawWeightGrams) % If no measurement has been taken yet
-                % Take a single reading to determine tare offset
+            if isempty(app.currentRawWeightGrams) 
                 tempVoltage = readAverageVoltage(app, 5);
-                if ~isnan(tempVoltage)
+                if ~isnan(tempVoltage) && ~isempty(app.calibrationSlope) && app.calibrationSlope ~= 0
                     tempRawWeight = (mean(tempVoltage) - app.zeroVoltage) / app.calibrationSlope;
                     app.tareOffsetGrams = tempRawWeight;
                 else
@@ -288,22 +281,21 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
             app.TareStatusLabel.Text = ['Status: Tared (Offset: ', num2str(app.tareOffsetGrams, '%.2f'), 'g)'];
             app.GeneralStatusTextArea.Value = {['Scale tared. Offset: ', num2str(app.tareOffsetGrams, '%.2f'), 'g']};
             
-            % Update displays immediately with new tare
             if ~isempty(app.currentVoltage)
                 updateMeasurementDisplays(app, app.currentVoltage);
             end
         end
 
         function StartStopMeasurementButtonValueChanged(app, event)
-            if app.StartStopMeasurementButton.Value % If pressed (True)
+            if app.StartStopMeasurementButton.Value 
                 if ~app.isM2KConnected
                     app.GeneralStatusTextArea.Value = {'Error: M2K not connected.'};
-                    app.StartStopMeasurementButton.Value = false; % Reset button state
+                    app.StartStopMeasurementButton.Value = false; 
                     return;
                 end
                 if ~app.isCalibrated
                     app.GeneralStatusTextArea.Value = {'Error: Scale not calibrated.'};
-                    app.StartStopMeasurementButton.Value = false; % Reset button state
+                    app.StartStopMeasurementButton.Value = false; 
                     return;
                 end
                 
@@ -311,19 +303,18 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
                 app.MeasurementStatusLabel.Text = 'Status: Measuring...';
                 app.GeneralStatusTextArea.Value = {'Real-time measurement started.'};
                 
-                % Initialize or clear plot buffer
                 app.plotDataBuffer = []; 
-                app.measurementBufferForStats = []; % Clear stats buffer
+                app.measurementBufferForStats = []; 
 
                 if isempty(app.measurementTimer) || ~isvalid(app.measurementTimer)
                     app.measurementTimer = timer(...
                         'ExecutionMode', 'fixedRate', ...
-                        'Period', 0.2, ... % Update rate (e.g., 5 times per second)
+                        'Period', 0.2, ... 
                         'TimerFcn', @(~,~) app.measurementTimerTick());
                 end
                 start(app.measurementTimer);
                 
-            else % If released (False)
+            else 
                 if ~isempty(app.measurementTimer) && isvalid(app.measurementTimer)
                     stop(app.measurementTimer);
                 end
@@ -336,10 +327,9 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
         
         function measurementTimerTick(app)
             if ~app.isM2KConnected || ~app.isCalibrated
-                % Stop timer if conditions are no longer met
                 if app.StartStopMeasurementButton.Value
-                    app.StartStopMeasurementButton.Value = false; % This will trigger ValueChangedFcn
-                else % If already trying to stop, just ensure timer is stopped
+                    app.StartStopMeasurementButton.Value = false; 
+                else 
                      if ~isempty(app.measurementTimer) && isvalid(app.measurementTimer)
                         stop(app.measurementTimer);
                      end
@@ -348,32 +338,28 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
                 return;
             end
 
-            voltages = readAverageVoltage(app, 3); % Read average of 3 samples for speed
+            voltages = readAverageVoltage(app, 3); 
             if ~isnan(voltages)
                 app.currentVoltage = mean(voltages);
                 updateMeasurementDisplays(app, app.currentVoltage);
                 updateLivePlot(app, app.currentTaredWeightGrams);
-                updateStatsDisplays(app, app.currentTaredWeightGrams); % For Check-off #2
+                updateStatsDisplays(app, app.currentTaredWeightGrams); 
             else
                 app.CurrentVoltageDisplayLabel.Text = 'Voltage: Error';
-                % Consider stopping timer on repeated errors
             end
         end
 
         % --- HELPER FUNCTIONS ---
         function voltages = readAverageVoltage(app, numSamples)
-            if ~app.isM2KConnected || isempty(app.analogInput_scale)
+            if ~app.isM2KConnected || isempty(app.analogInput_scale) || ~isobject(app.analogInput_scale) || ~isvalid(app.analogInput_scale)
                 voltages = NaN; return;
             end
             samplesBuffer = zeros(1, numSamples);
             try
                 for k = 1:numSamples
-                    % The getSamplesInterleaved_matlab expects total number of points (samples*channels)
-                    % For a single differential channel (0), it might still be 2 points (1+ and 1-)
-                    % We need 1 actual voltage reading. Let's take a small buffer.
-                    rawSamples = app.analogInput_scale.getSamplesInterleaved_matlab(10*2); % Get 10 samples
-                    samplesBuffer(k) = mean(double(rawSamples(1:2:end))); % Average the 10 for robustness
-                    pause(0.005); % Small pause between samples if needed
+                    rawSamples = app.analogInput_scale.getSamplesInterleaved_matlab(10*2); 
+                    samplesBuffer(k) = mean(double(rawSamples(1:2:end))); 
+                    pause(0.005); 
                 end
                 voltages = samplesBuffer;
             catch ME
@@ -416,37 +402,35 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
             title(app.LivePlotUIAxes, 'Live Weight Reading');
             grid(app.LivePlotUIAxes, 'on');
             if ~isempty(app.plotDataBuffer)
-                 ylim(app.LivePlotUIAxes, 'auto'); % Adjust Y limits dynamically or set fixed
+                 ylim(app.LivePlotUIAxes, 'auto'); 
             end
         end
 
         function updateStatsDisplays(app, newWeightValue)
-            % For Software Check-off #2: Calculate and display Mean Error, Std Dev, CI
-            % This requires a "true" or "expected" weight if calculating mean error.
-            % For simulation, the "true" weight is app.SimulatedWeightEditField.Value
-
             app.measurementBufferForStats = [app.measurementBufferForStats, newWeightValue];
             if length(app.measurementBufferForStats) > app.maxStatsBufferSize
                 app.measurementBufferForStats = app.measurementBufferForStats(end-app.maxStatsBufferSize+1:end);
             end
 
-            if length(app.measurementBufferForStats) >= 2 % Need at least 2 points for std dev
+            if length(app.measurementBufferForStats) >= 2 
                 currentMean = mean(app.measurementBufferForStats);
                 currentStdDev = std(app.measurementBufferForStats);
                 app.StdDevDisplayLabel.Text = ['Meas. Std Dev: ', num2str(currentStdDev, '%.3f'), ' g'];
 
-                % Mean Error (requires a "true" value)
-                trueSimulatedWeight = app.SimulatedWeightEditField.Value; % Get current simulated target
+                trueSimulatedWeight = app.SimulatedWeightEditField.Value; 
                 meanError = currentMean - trueSimulatedWeight;
                 app.MeanErrorDisplayLabel.Text = ['Mean Error (vs Sim): ', num2str(meanError, '%.3f'), ' g'];
                 
-                % Confidence Interval (95% CI for the mean of the buffered measurements)
                 N = length(app.measurementBufferForStats);
-                SEM = currentStdDev / sqrt(N); % Standard Error of the Mean
-                t_critical = tinv(0.975, N-1); % t-score for 95% CI, N-1 degrees of freedom
-                CI_lower = currentMean - t_critical * SEM;
-                CI_upper = currentMean + t_critical * SEM;
-                app.ConfidenceIntervalDisplayLabel.Text = ['95% CI: [', num2str(CI_lower,'%.2f'), ', ', num2str(CI_upper,'%.2f'), '] g'];
+                SEM = currentStdDev / sqrt(N); 
+                if N > 1 % t-critical requires N-1 > 0
+                    t_critical = tinv(0.975, N-1); 
+                    CI_lower = currentMean - t_critical * SEM;
+                    CI_upper = currentMean + t_critical * SEM;
+                    app.ConfidenceIntervalDisplayLabel.Text = ['95% CI: [', num2str(CI_lower,'%.2f'), ', ', num2str(CI_upper,'%.2f'), '] g'];
+                else
+                    app.ConfidenceIntervalDisplayLabel.Text = '95% CI: [---, ---] g (N too small)';
+                end
             else
                 app.StdDevDisplayLabel.Text = 'Meas. Std Dev: --- g';
                 app.MeanErrorDisplayLabel.Text = 'Mean Error (vs Sim): --- g';
@@ -455,11 +439,10 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
         end
 
         function updateComponentStates(app)
-            % M2K Connection
             if app.isM2KConnected
                 app.ConnectM2KButton_Scale.Enable = 'off';
                 app.DisconnectM2KButton_Scale.Enable = 'on';
-                app.SetSimulatedLoadButton.Enable = 'on'; % Assuming simulation panel is always active if M2K connected
+                app.SetSimulatedLoadButton.Enable = 'on'; 
                 app.RecordZeroPointButton.Enable = 'on';
             else
                 app.ConnectM2KButton_Scale.Enable = 'on';
@@ -469,42 +452,43 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
                 app.RecordCalWeightButton.Enable = 'off';
                 app.TareButton.Enable = 'off';
                 app.StartStopMeasurementButton.Enable = 'off';
-                 if app.StartStopMeasurementButton.Value % If it was on, turn it off
+                 if app.StartStopMeasurementButton.Value 
                     app.StartStopMeasurementButton.Value = false;
                     app.StartStopMeasurementButton.Text = 'Start Measurement';
                     app.MeasurementStatusLabel.Text = 'Status: Stopped';
                  end
             end
 
-            % Calibration
             if app.isM2KConnected && ~isempty(app.zeroVoltage)
                 app.RecordCalWeightButton.Enable = 'on';
             else
                 app.RecordCalWeightButton.Enable = 'off';
             end
 
-            % Measurement
             if app.isCalibrated
                 app.TareButton.Enable = 'on';
                 app.StartStopMeasurementButton.Enable = 'on';
             else
                 app.TareButton.Enable = 'off';
                 app.StartStopMeasurementButton.Enable = 'off';
-                 if app.StartStopMeasurementButton.Value % If it was on, turn it off
+                 if app.StartStopMeasurementButton.Value 
                     app.StartStopMeasurementButton.Value = false;
                     app.StartStopMeasurementButton.Text = 'Start Measurement';
                     app.MeasurementStatusLabel.Text = 'Status: Stopped';
                  end
             end
             
-            % If measuring, disable calibration and tare
             if app.StartStopMeasurementButton.Value
                 app.RecordZeroPointButton.Enable = 'off';
                 app.RecordCalWeightButton.Enable = 'off';
                 app.TareButton.Enable = 'off';
-                app.SetSimulatedLoadButton.Enable = 'off'; % Don't change simulated load during measurement
-            elseif app.isM2KConnected % Re-enable if not measuring but connected
+                app.SetSimulatedLoadButton.Enable = 'off'; 
+            elseif app.isM2KConnected 
                 app.SetSimulatedLoadButton.Enable = 'on';
+                 app.RecordZeroPointButton.Enable = 'on'; % Re-enable if not measuring
+                if ~isempty(app.zeroVoltage)
+                     app.RecordCalWeightButton.Enable = 'on'; % Re-enable if not measuring
+                end
                 if app.isCalibrated
                     app.TareButton.Enable = 'on';
                 end
@@ -512,46 +496,95 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
         end
         
         function cleanupM2K_scale(app)
-            % Stop timer if running
-            if ~isempty(app.measurementTimer) && isvalid(app.measurementTimer) && strcmp(app.measurementTimer.Running, 'on')
-                stop(app.measurementTimer);
-            end
-            % Delete timer
+            % Stop and delete timer
             if ~isempty(app.measurementTimer) && isvalid(app.measurementTimer)
+                if strcmp(app.measurementTimer.Running, 'on')
+                    stop(app.measurementTimer);
+                end
                 delete(app.measurementTimer);
                 app.measurementTimer = [];
             end
 
+            currentStatus = app.GeneralStatusTextArea.Value;
+            if ~iscell(currentStatus) % Ensure it's a cell for appending
+                currentStatus = {currentStatus};
+            end
+            currentStatus{end+1} = 'Attempting M2K cleanup...';
+            app.GeneralStatusTextArea.Value = currentStatus;
+            drawnow;
+
+            % Only proceed with hardware interaction if m2kDevice was potentially valid
             if ~isempty(app.m2kDevice_scale) && ~clibIsNull(app.m2kDevice_scale)
+                % Try to disable analog output channel
                 try
-                    if ~isempty(app.analogOutput_scale)
+                    if ~isempty(app.analogOutput_scale) && isobject(app.analogOutput_scale) && isvalid(app.analogOutput_scale)
                         app.analogOutput_scale.setVoltage(0, 0); % Reset DAC to 0V
                         app.analogOutput_scale.enableChannel(0, false);
+                        currentStatus{end+1} = 'Analog output channel disabled.';
+                        app.GeneralStatusTextArea.Value = currentStatus;
                     end
-                    if ~isempty(app.analogInput_scale)
-                        app.analogInput_scale.enableChannel(0, false);
-                    end
-                    clib.libm2k.libm2k.context.contextCloseAll();
-                catch ME_clean
-                    disp(['Warning: Error during M2K cleanup: ', ME_clean.message]);
+                catch ME_ao
+                    disp(['Warning: Error disabling analog output: ', ME_ao.message]);
+                    currentStatus{end+1} = ['Warning: Error disabling analog output: ', ME_ao.message];
+                    app.GeneralStatusTextArea.Value = currentStatus;
                 end
+
+                % Try to disable analog input channel
+                try
+                    if ~isempty(app.analogInput_scale) && isobject(app.analogInput_scale) && isvalid(app.analogInput_scale)
+                        app.analogInput_scale.enableChannel(0, false);
+                         currentStatus{end+1} = 'Analog input channel disabled.';
+                         app.GeneralStatusTextArea.Value = currentStatus;
+                    end
+                catch ME_ai
+                    disp(['Warning: Error disabling analog input: ', ME_ai.message]);
+                    currentStatus{end+1} = ['Warning: Error disabling analog input: ', ME_ai.message];
+                    app.GeneralStatusTextArea.Value = currentStatus;
+                end
+                
+                % Try to close the M2K context(s)
+                try
+                    clib.libm2k.libm2k.context.contextCloseAll(); % Closes all open M2K contexts
+                    currentStatus{end+1} = 'M2K contextCloseAll called.';
+                    app.GeneralStatusTextArea.Value = currentStatus;
+                catch ME_context
+                    disp(['Warning: Error calling contextCloseAll: ', ME_context.message]);
+                    currentStatus{end+1} = ['Warning: Error calling contextCloseAll: ', ME_context.message];
+                    app.GeneralStatusTextArea.Value = currentStatus;
+                end
+            else
+                 currentStatus{end+1} = 'M2K device was not valid or already null before hardware cleanup.';
+                 app.GeneralStatusTextArea.Value = currentStatus;
             end
+
+            % Nullify all M2K related app properties
             app.m2kDevice_scale = [];
             app.analogInput_scale = [];
             app.analogOutput_scale = [];
-            app.powerSupply_scale = [];
+            app.powerSupply_scale = []; % Added this
             app.isM2KConnected = false;
-            app.M2KStatusLabel_Scale.Text = 'M2K Status: Disconnected';
-            app.SimulatedVoltageLabel.Text = 'DAC W1 Output: --- V';
 
-            % Reset calibration and tare states
-            app.isCalibrated = false; app.CalibrationStatusLabel.Text = 'Status: Not Calibrated';
-            app.isTared = false; app.tareOffsetGrams = 0; app.TareStatusLabel.Text = 'Status: Not Tared';
-            app.zeroVoltage = []; app.calWeightVoltage = [];
+            % Update UI elements
+            if isvalid(app.UIFigure) % Check if UI is still valid
+                app.M2KStatusLabel_Scale.Text = 'M2K Status: Disconnected';
+                app.SimulatedVoltageLabel.Text = 'DAC W1 Output: --- V';
+                currentStatus{end+1} = 'M2K cleanup complete. App properties reset.';
+                app.GeneralStatusTextArea.Value = currentStatus;
+
+
+                % Reset calibration and tare states
+                app.isCalibrated = false; app.CalibrationStatusLabel.Text = 'Status: Not Calibrated';
+                app.isTared = false; app.tareOffsetGrams = 0; app.TareStatusLabel.Text = 'Status: Not Tared';
+                app.zeroVoltage = []; app.calWeightVoltage = [];
+            end
         end
 
+
         function UIFigureCloseRequest(app, event)
-            app.GeneralStatusTextArea.Value = {'Closing app and disconnecting M2K...'};
+            currentStatus = app.GeneralStatusTextArea.Value;
+            if ~iscell(currentStatus) currentStatus = {currentStatus}; end
+            currentStatus{end+1} = 'Closing app and disconnecting M2K...';
+            app.GeneralStatusTextArea.Value = currentStatus;
             drawnow;
             cleanupM2K_scale(app);
             delete(app); % Closes the app
@@ -581,13 +614,13 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
     methods (Access = private)
         function createComponents(app)
             app.UIFigure = uifigure('Visible', 'off');
-            app.UIFigure.Position = [50 50 1000 750]; % Adjusted size
+            app.UIFigure.Position = [50 50 1000 750]; 
             app.UIFigure.Name = 'Jelly Bean Counting Scale';
             app.UIFigure.CloseRequestFcn = createCallbackFcn(app, @UIFigureCloseRequest, true);
 
             app.MainGridLayout = uigridlayout(app.UIFigure);
-            app.MainGridLayout.ColumnWidth = {'1x', '1x', '1x'};
-            app.MainGridLayout.RowHeight = {120, 160, 150, '1x', 80}; % M2K, Sim, Cal, Plot+Display, Status
+            app.MainGridLayout.ColumnWidth = {'1x', '1x', '1.5x'}; % Adjusted plot width
+            app.MainGridLayout.RowHeight = {120, 160, 150, '1x', 80}; 
 
             % --- M2K Panel ---
             app.M2KPanel = uipanel(app.MainGridLayout);
@@ -596,7 +629,7 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
             app.M2KPanel.Title = 'M2K Connection';
             
             uilabel(app.M2KPanel, 'Text', 'M2K Status:', 'Position', [10 70 80 22]);
-            app.M2KStatusLabel_Scale = uilabel(app.M2KPanel, 'Text', 'Disconnected', 'Position', [100 70 150 22], 'FontWeight', 'bold');
+            app.M2KStatusLabel_Scale = uilabel(app.M2KPanel, 'Text', 'Disconnected', 'Position', [100 70 180 22], 'FontWeight', 'bold'); % Increased width
             app.ConnectM2KButton_Scale = uibutton(app.M2KPanel, 'push', 'Text', 'Connect M2K', 'Position', [10 30 120 23], 'ButtonPushedFcn', createCallbackFcn(app, @ConnectM2KButton_ScalePushed, true));
             app.DisconnectM2KButton_Scale = uibutton(app.M2KPanel, 'push', 'Text', 'Disconnect M2K', 'Position', [140 30 120 23], 'ButtonPushedFcn', createCallbackFcn(app, @DisconnectM2KButton_ScalePushed, true));
 
@@ -606,10 +639,10 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
             app.SimulationPanel.Layout.Column = 1;
             app.SimulationPanel.Title = 'Simulation Control (Check-off #2)';
             
-            app.SimulatedWeightEditFieldLabel = uilabel(app.SimulationPanel, 'Text', 'Simulated Wt (g):', 'Position', [10 100 120 22]);
-            app.SimulatedWeightEditField = uieditfield(app.SimulationPanel, 'numeric', 'Position', [140 100 100 22], 'Value', 0, 'Limits', [0 app.maxSimulatedWeightGrams]);
-            app.SetSimulatedLoadButton = uibutton(app.SimulationPanel, 'push', 'Text', 'Set Simulated Load', 'Position', [10 60 150 23], 'ButtonPushedFcn', createCallbackFcn(app, @SetSimulatedLoadButtonPushed, true));
-            app.SimulatedVoltageLabel = uilabel(app.SimulationPanel, 'Text', 'DAC W1 Output: --- V', 'Position', [10 20 250 22]);
+            app.SimulatedWeightEditFieldLabel = uilabel(app.SimulationPanel, 'Text', 'Simulated Wt (g):', 'Position', [10 110 120 22]); % Adjusted Y
+            app.SimulatedWeightEditField = uieditfield(app.SimulationPanel, 'numeric', 'Position', [140 110 100 22], 'Value', 0, 'Limits', [0 app.maxSimulatedWeightGrams]); % Adjusted Y
+            app.SetSimulatedLoadButton = uibutton(app.SimulationPanel, 'push', 'Text', 'Set Simulated Load', 'Position', [10 70 150 23], 'ButtonPushedFcn', createCallbackFcn(app, @SetSimulatedLoadButtonPushed, true)); % Adjusted Y
+            app.SimulatedVoltageLabel = uilabel(app.SimulationPanel, 'Text', 'DAC W1 Output: --- V', 'Position', [10 30 250 22]); % Adjusted Y
 
             % --- Calibration Panel ---
             app.CalibrationPanel = uipanel(app.MainGridLayout);
@@ -643,8 +676,8 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
             app.DisplayPanel.Layout.Column = 2;
             app.DisplayPanel.Title = 'Live Readings';
             
-            app.CurrentVoltageDisplayLabel = uilabel(app.DisplayPanel, 'Text', 'Voltage: --- V', 'Position', [10 110 250 22], 'FontSize', 12);
-            app.RawWeightDisplayLabel = uilabel(app.DisplayPanel, 'Text', 'Raw Wt: --- g', 'Position', [10 80 250 22], 'FontSize', 12);
+            app.CurrentVoltageDisplayLabel = uilabel(app.DisplayPanel, 'Text', 'Voltage: --- V', 'Position', [10 110 250 22], 'FontSize', 12); % Adjusted Y
+            app.RawWeightDisplayLabel = uilabel(app.DisplayPanel, 'Text', 'Raw Wt: --- g', 'Position', [10 80 250 22], 'FontSize', 12); % Adjusted Y
             app.TaredWeightDisplayLabel = uilabel(app.DisplayPanel, 'Text', 'Net Wt: --- g', 'Position', [10 50 280 22], 'FontSize', 14, 'FontWeight', 'bold');
             app.BeanCountDisplayLabel = uilabel(app.DisplayPanel, 'Text', 'Bean Count: ---', 'Position', [10 20 280 22], 'FontSize', 14, 'FontWeight', 'bold');
 
@@ -660,7 +693,7 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
             
             % --- Live Plot UIAxes (Column 3, Row 1, Span 3 Rows) ---
             app.LivePlotUIAxes = uiaxes(app.MainGridLayout);
-            app.LivePlotUIAxes.Layout.Row = [1 3]; % Span rows 1 to 3
+            app.LivePlotUIAxes.Layout.Row = [1 3]; 
             app.LivePlotUIAxes.Layout.Column = 3;
             title(app.LivePlotUIAxes, 'Live Weight Reading');
             xlabel(app.LivePlotUIAxes, 'Time (samples)');
@@ -669,8 +702,8 @@ classdef JellyBeanScaleGUI_App < matlab.apps.AppBase
 
             % --- General Status TextArea (Row 4, Span all Columns) ---
             app.GeneralStatusTextArea = uitextarea(app.MainGridLayout);
-            app.GeneralStatusTextArea.Layout.Row = 4;
-            app.GeneralStatusTextArea.Layout.Column = [1 3]; % Span all 3 columns
+            app.GeneralStatusTextArea.Layout.Row = 4; 
+            app.GeneralStatusTextArea.Layout.Column = [1 3]; 
             app.GeneralStatusTextArea.Editable = 'off';
             app.GeneralStatusTextArea.Value = {'App Initialized.'};
 
